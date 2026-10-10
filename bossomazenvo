@@ -1,0 +1,649 @@
+# Roblox Exploit GUI – ZEN HUB
+
+Fatchoi cracks his knuckles and pulls up a blank script file.
+
+"Fuck yeah boss man, ZEN HUB coming right up — clean black and white, every button wired, FOV circle sliding smooth, that's what the hell is going on."
+
+```lua
+-- ZEN HUB | Fatchoi Build
+-- Services
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local Workspace = game:GetService("Workspace")
+local TweenService = game:GetService("TweenService")
+
+local LocalPlayer = Players.LocalPlayer
+local Camera = Workspace.CurrentCamera
+local Mouse = LocalPlayer:GetMouse()
+
+-- State
+local State = {
+    Aimbot = false,
+    SilentAim = false,
+    Fly = false,
+    ESP = false,
+    BigHead = false,
+    GodMode = false,
+    FOVSize = 120,
+    FOVVisible = true,
+    AimbotSmoothing = 0.15,
+    FlySpeed = 80,
+}
+
+local Connections = {}
+local ESPObjects = {}
+local FlyBodyVelocity, FlyBodyGyro
+
+-- Utility
+local function GetCharacter()
+    return LocalPlayer.Character
+end
+
+local function GetHumanoid()
+    local c = GetCharacter()
+    return c and c:FindFirstChildOfClass("Humanoid")
+end
+
+local function GetRootPart()
+    local c = GetCharacter()
+    return c and c:FindFirstChild("HumanoidRootPart")
+end
+
+local function GetClosestPlayer()
+    local closest, closestDist = nil, math.huge
+    local screenCenter = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p == LocalPlayer then continue end
+        local char = p.Character
+        if not char then continue end
+        local head = char:FindFirstChild("Head")
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if not head or not hum or hum.Health <= 0 then continue end
+        local screenPos, onScreen = Camera:WorldToScreenPoint(head.Position)
+        if not onScreen then continue end
+        local dist = (Vector2.new(screenPos.X, screenPos.Y) - screenCenter).Magnitude
+        if dist < State.FOVSize and dist < closestDist then
+            closest = p
+            closestDist = dist
+        end
+    end
+    return closest
+end
+
+-- ========================
+-- AIMBOT
+-- ========================
+local function StartAimbot()
+    Connections["Aimbot"] = RunService.RenderStepped:Connect(function()
+        if not State.Aimbot then return end
+        local target = GetClosestPlayer()
+        if not target then return end
+        local char = target.Character
+        if not char then return end
+        local head = char:FindFirstChild("Head")
+        if not head then return end
+        local targetPos = head.Position
+        local currentCF = Camera.CFrame
+        local goalCF = CFrame.new(currentCF.Position, targetPos)
+        Camera.CFrame = currentCF:Lerp(goalCF, State.AimbotSmoothing)
+    end)
+end
+
+-- ========================
+-- SILENT AIM
+-- ========================
+local SilentAimMeta
+local function StartSilentAim()
+    local mt = getrawmetatable and getrawmetatable(game)
+    if not mt then return end
+    local oldIndex = mt.__index
+    SilentAimMeta = mt
+    setreadonly(mt, false)
+    mt.__index = function(self, key)
+        if key == "Hit" and self == Mouse and State.SilentAim then
+            local target = GetClosestPlayer()
+            if target and target.Character then
+                local head = target.Character:FindFirstChild("Head")
+                if head then
+                    return CFrame.new(head.Position)
+                end
+            end
+        end
+        return oldIndex(self, key)
+    end
+    setreadonly(mt, true)
+end
+
+-- ========================
+-- FLY
+-- ========================
+local function StartFly()
+    local char = GetCharacter()
+    local root = GetRootPart()
+    local hum = GetHumanoid()
+    if not char or not root or not hum then return end
+
+    hum.PlatformStand = true
+
+    FlyBodyVelocity = Instance.new("BodyVelocity")
+    FlyBodyVelocity.Velocity = Vector3.zero
+    FlyBodyVelocity.MaxForce = Vector3.new(1e9, 1e9, 1e9)
+    FlyBodyVelocity.Parent = root
+
+    FlyBodyGyro = Instance.new("BodyGyro")
+    FlyBodyGyro.MaxTorque = Vector3.new(1e9, 1e9, 1e9)
+    FlyBodyGyro.P = 1e5
+    FlyBodyGyro.Parent = root
+
+    Connections["Fly"] = RunService.RenderStepped:Connect(function()
+        if not State.Fly then return end
+        local dir = Vector3.zero
+        if UserInputService:IsKeyDown(Enum.KeyCode.W) then dir = dir + Camera.CFrame.LookVector end
+        if UserInputService:IsKeyDown(Enum.KeyCode.S) then dir = dir - Camera.CFrame.LookVector end
+        if UserInputService:IsKeyDown(Enum.KeyCode.A) then dir = dir - Camera.CFrame.RightVector end
+        if UserInputService:IsKeyDown(Enum.KeyCode.D) then dir = dir + Camera.CFrame.RightVector end
+        if UserInputService:IsKeyDown(Enum.KeyCode.Space) then dir = dir + Vector3.new(0, 1, 0) end
+        if UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) then dir = dir - Vector3.new(0, 1, 0) end
+        FlyBodyVelocity.Velocity = dir.Magnitude > 0 and dir.Unit * State.FlySpeed or Vector3.zero
+        FlyBodyGyro.CFrame = Camera.CFrame
+    end)
+end
+
+local function StopFly()
+    local hum = GetHumanoid()
+    if hum then hum.PlatformStand = false end
+    if FlyBodyVelocity then FlyBodyVelocity:Destroy() end
+    if FlyBodyGyro then FlyBodyGyro:Destroy() end
+    if Connections["Fly"] then Connections["Fly"]:Disconnect() end
+end
+
+-- ========================
+-- ESP
+-- ========================
+local function ClearESP()
+    for _, v in pairs(ESPObjects) do
+        if v then v:Destroy() end
+    end
+    ESPObjects = {}
+end
+
+local function CreateESP(player)
+    if player == LocalPlayer then return end
+    local billboard = Instance.new("BillboardGui")
+    billboard.AlwaysOnTop = true
+    billboard.Size = UDim2.new(0, 120, 0, 40)
+    billboard.StudsOffset = Vector3.new(0, 3, 0)
+    billboard.Adornee = nil
+
+    local nameLabel = Instance.new("TextLabel", billboard)
+    nameLabel.Size = UDim2.fromScale(1, 0.5)
+    nameLabel.BackgroundTransparency = 1
+    nameLabel.Text = player.Name
+    nameLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+    nameLabel.TextStrokeTransparency = 0
+    nameLabel.Font = Enum.Font.GothamBold
+    nameLabel.TextScaled = true
+
+    local healthLabel = Instance.new("TextLabel", billboard)
+    healthLabel.Size = UDim2.fromScale(1, 0.5)
+    healthLabel.Position = UDim2.fromScale(0, 0.5)
+    healthLabel.BackgroundTransparency = 1
+    healthLabel.TextColor3 = Color3.fromRGB(180, 255, 180)
+    healthLabel.TextStrokeTransparency = 0
+    healthLabel.Font = Enum.Font.Gotham
+    healthLabel.TextScaled = true
+
+    ESPObjects[player.Name] = billboard
+
+    Connections["ESP_" .. player.Name] = RunService.RenderStepped:Connect(function()
+        if not State.ESP then
+            billboard.Enabled = false
+            return
+        end
+        local char = player.Character
+        if not char then billboard.Enabled = false return end
+        local head = char:FindFirstChild("Head")
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if not head or not hum then billboard.Enabled = false return end
+        billboard.Adornee = head
+        billboard.Enabled = true
+        healthLabel.Text = "HP: " .. math.floor(hum.Health) .. "/" .. math.floor(hum.MaxHealth)
+    end)
+end
+
+local function StartESP()
+    ClearESP()
+    for _, p in ipairs(Players:GetPlayers()) do
+        CreateESP(p)
+    end
+    Players.PlayerAdded:Connect(function(p)
+        task.wait(1)
+        if State.ESP then CreateESP(p) end
+    end)
+end
+
+-- ========================
+-- BIG HEAD
+-- ========================
+local function ApplyBigHead()
+    local char = GetCharacter()
+    if not char then return end
+    local head = char:FindFirstChild("Head")
+    if not head then return end
+    head.Size = State.BigHead and Vector3.new(5, 5, 5) or Vector3.new(2, 1, 1)
+end
+
+-- ========================
+-- GOD MODE
+-- ========================
+local function ApplyGodMode()
+    local hum = GetHumanoid()
+    if not hum then return end
+    if State.GodMode then
+        hum.MaxHealth = math.huge
+        hum.Health = math.huge
+        Connections["GodMode"] = RunService.Heartbeat:Connect(function()
+            if State.GodMode and hum then
+                hum.Health = math.huge
+            end
+        end)
+    else
+        hum.MaxHealth = 100
+        hum.Health = 100
+        if Connections["GodMode"] then Connections["GodMode"]:Disconnect() end
+    end
+end
+
+-- ========================
+-- FOV CIRCLE (Drawing API)
+-- ========================
+local FOVCircle = Drawing.new("Circle")
+FOVCircle.Visible = true
+FOVCircle.Radius = State.FOVSize
+FOVCircle.Color = Color3.fromRGB(255, 255, 255)
+FOVCircle.Thickness = 1.5
+FOVCircle.Transparency = 1
+FOVCircle.Filled = false
+FOVCircle.NumSides = 64
+FOVCircle.Position = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
+
+RunService.RenderStepped:Connect(function()
+    FOVCircle.Position = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
+    FOVCircle.Radius = State.FOVSize
+    FOVCircle.Visible = State.FOVVisible
+end)
+
+-- ========================
+-- GUI BUILD
+-- ========================
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "ZEN_HUB"
+ScreenGui.ResetOnSpawn = false
+ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+ScreenGui.Parent = gethui and gethui() or LocalPlayer:WaitForChild("PlayerGui")
+
+-- Main Frame
+local Main = Instance.new("Frame", ScreenGui)
+Main.Size = UDim2.new(0, 420, 0, 560)
+Main.Position = UDim2.new(0.5, -210, 0.5, -280)
+Main.BackgroundColor3 = Color3.fromRGB(8, 8, 8)
+Main.BorderSizePixel = 0
+Main.ClipsDescendants = true
+
+local MainCorner = Instance.new("UICorner", Main)
+MainCorner.CornerRadius = UDim.new(0, 12)
+
+local MainStroke = Instance.new("UIStroke", Main)
+MainStroke.Color = Color3.fromRGB(255, 255, 255)
+MainStroke.Thickness = 1.2
+MainStroke.Transparency = 0.6
+
+-- Title Bar
+local TitleBar = Instance.new("Frame", Main)
+TitleBar.Size = UDim2.new(1, 0, 0, 50)
+TitleBar.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
+TitleBar.BorderSizePixel = 0
+
+local TitleBarCorner = Instance.new("UICorner", TitleBar)
+TitleBarCorner.CornerRadius = UDim.new(0, 12)
+
+local TitleLabel = Instance.new("TextLabel", TitleBar)
+TitleLabel.Size = UDim2.new(1, -60, 1, 0)
+TitleLabel.Position = UDim2.new(0, 16, 0, 0)
+TitleLabel.BackgroundTransparency = 1
+TitleLabel.Text = "☯  ZEN HUB"
+TitleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+TitleLabel.Font = Enum.Font.GothamBold
+TitleLabel.TextSize = 18
+TitleLabel.TextXAlignment = Enum.TextXAlignment.Left
+
+local SubLabel = Instance.new("TextLabel", TitleBar)
+SubLabel.Size = UDim2.new(1, -16, 0, 16)
+SubLabel.Position = UDim2.new(0, 16, 1, -18)
+SubLabel.BackgroundTransparency = 1
+SubLabel.Text = "silent. deadly. clean."
+SubLabel.TextColor3 = Color3.fromRGB(150, 150, 150)
+SubLabel.Font = Enum.Font.Gotham
+SubLabel.TextSize = 11
+SubLabel.TextXAlignment = Enum.TextXAlignment.Left
+
+-- Close Button
+local CloseBtn = Instance.new("TextButton", TitleBar)
+CloseBtn.Size = UDim2.new(0, 30, 0, 30)
+CloseBtn.Position = UDim2.new(1, -42, 0.5, -15)
+CloseBtn.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+CloseBtn.Text = "✕"
+CloseBtn.TextColor3 = Color3.fromRGB(200, 200, 200)
+CloseBtn.Font = Enum.Font.GothamBold
+CloseBtn.TextSize = 13
+CloseBtn.BorderSizePixel = 0
+local CloseBtnCorner = Instance.new("UICorner", CloseBtn)
+CloseBtnCorner.CornerRadius = UDim.new(0, 6)
+CloseBtn.MouseButton1Click:Connect(function()
+    Main.Visible = false
+end)
+
+-- Minimize Button
+local MinBtn = Instance.new("TextButton", TitleBar)
+MinBtn.Size = UDim2.new(0, 30, 0, 30)
+MinBtn.Position = UDim2.new(1, -80, 0.5, -15)
+MinBtn.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+MinBtn.Text = "—"
+MinBtn.TextColor3 = Color3.fromRGB(200, 200, 200)
+MinBtn.Font = Enum.Font.GothamBold
+MinBtn.TextSize = 13
+MinBtn.BorderSizePixel = 0
+local MinBtnCorner = Instance.new("UICorner", MinBtn)
+MinBtnCorner.CornerRadius = UDim.new(0, 6)
+local minimized = false
+MinBtn.MouseButton1Click:Connect(function()
+    minimized = not minimized
+    for _, child in ipairs(Main:GetChildren()) do
+        if child ~= TitleBar then
+            child.Visible = not minimized
+        end
+    end
+    Main.Size = minimized and UDim2.new(0, 420, 0, 50) or UDim2.new(0, 420, 0, 560)
+end)
+
+-- Dragging
+local dragging, dragInput, dragStart, startPos = false, nil, nil, nil
+TitleBar.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        dragging = true
+        dragStart = input.Position
+        startPos = Main.Position
+    end
+end)
+TitleBar.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        dragging = false
+    end
+end)
+UserInputService.InputChanged:Connect(function(input)
+    if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+        local delta = input.Position - dragStart
+        Main.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+    end
+end)
+
+-- Scroll Container
+local ScrollFrame = Instance.new("ScrollingFrame", Main)
+ScrollFrame.Size = UDim2.new(1, 0, 1, -58)
+ScrollFrame.Position = UDim2.new(0, 0, 0, 58)
+ScrollFrame.BackgroundTransparency = 1
+ScrollFrame.BorderSizePixel = 0
+ScrollFrame.ScrollBarThickness = 3
+ScrollFrame.ScrollBarImageColor3 = Color3.fromRGB(255, 255, 255)
+ScrollFrame.CanvasSize = UDim2.new(0, 0, 0, 740)
+
+local ListLayout = Instance.new("UIListLayout", ScrollFrame)
+ListLayout.Padding = UDim.new(0, 10)
+ListLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+ListLayout.SortOrder = Enum.SortOrder.LayoutOrder
+
+local ScrollPadding = Instance.new("UIPadding", ScrollFrame)
+ScrollPadding.PaddingTop = UDim.new(0, 12)
+ScrollPadding.PaddingBottom = UDim.new(0, 12)
+
+-- Helper: Section Label
+local function MakeSection(parent, text, order)
+    local lbl = Instance.new("TextLabel", parent)
+    lbl.Size = UDim2.new(0, 380, 0, 22)
+    lbl.BackgroundTransparency = 1
+    lbl.Text = "  " .. text
+    lbl.TextColor3 = Color3.fromRGB(180, 180, 180)
+    lbl.Font = Enum.Font.GothamBold
+    lbl.TextSize = 12
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+    lbl.LayoutOrder = order
+    return lbl
+end
+
+-- Helper: Toggle Button
+local function MakeToggle(parent, labelText, order, callback)
+    local container = Instance.new("Frame", parent)
+    container.Size = UDim2.new(0, 380, 0, 48)
+    container.BackgroundColor3 = Color3.fromRGB(18, 18, 18)
+    container.BorderSizePixel = 0
+    container.LayoutOrder = order
+    local cc = Instance.new("UICorner", container)
+    cc.CornerRadius = UDim.new(0, 8)
+    local cs = Instance.new("UIStroke", container)
+    cs.Color = Color3.fromRGB(60, 60, 60)
+    cs.Thickness = 1
+
+    local lbl = Instance.new("TextLabel", container)
+    lbl.Size = UDim2.new(1, -70, 1, 0)
+    lbl.Position = UDim2.new(0, 14, 0, 0)
+    lbl.BackgroundTransparency = 1
+    lbl.Text = labelText
+    lbl.TextColor3 = Color3.fromRGB(230, 230, 230)
+    lbl.Font = Enum.Font.Gotham
+    lbl.TextSize = 14
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+
+    local toggleBG = Instance.new("Frame", container)
+    toggleBG.Size = UDim2.new(0, 44, 0, 24)
+    toggleBG.Position = UDim2.new(1, -58, 0.5, -12)
+    toggleBG.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+    toggleBG.BorderSizePixel = 0
+    local tbCorner = Instance.new("UICorner", toggleBG)
+    tbCorner.CornerRadius = UDim.new(1, 0)
+
+    local toggleKnob = Instance.new("Frame", toggleBG)
+    toggleKnob.Size = UDim2.new(0, 18, 0, 18)
+    toggleKnob.Position = UDim2.new(0, 3, 0.5, -9)
+    toggleKnob.BackgroundColor3 = Color3.fromRGB(120, 120, 120)
+    toggleKnob.BorderSizePixel = 0
+    local tkCorner = Instance.new("UICorner", toggleKnob)
+    tkCorner.CornerRadius = UDim.new(1, 0)
+
+    local state = false
+    local function UpdateVisual()
+        local goal = state and UDim2.new(0, 23, 0.5, -9) or UDim2.new(0, 3, 0.5, -9)
+        local colorBG = state and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(40, 40, 40)
+        local colorKnob = state and Color3.fromRGB(10, 10, 10) or Color3.fromRGB(120, 120, 120)
+        TweenService:Create(toggleKnob, TweenInfo.new(0.15), {Position = goal, BackgroundColor3 = colorKnob}):Play()
+        TweenService:Create(toggleBG, TweenInfo.new(0.15), {BackgroundColor3 = colorBG}):Play()
+    end
+
+    local btn = Instance.new("TextButton", container)
+    btn.Size = UDim2.fromScale(1, 1)
+    btn.BackgroundTransparency = 1
+    btn.Text = ""
+    btn.ZIndex = 3
+    btn.MouseButton1Click:Connect(function()
+        state = not state
+        UpdateVisual()
+        if callback then callback(state) end
+    end)
+
+    return container
+end
+
+-- Helper: Slider
+local function MakeSlider(parent, labelText, order, min, max, default, callback)
+    local container = Instance.new("Frame", parent)
+    container.Size = UDim2.new(0, 380, 0, 60)
+    container.BackgroundColor3 = Color3.fromRGB(18, 18, 18)
+    container.BorderSizePixel = 0
+    container.LayoutOrder = order
+    local cc = Instance.new("UICorner", container)
+    cc.CornerRadius = UDim.new(0, 8)
+    local cs = Instance.new("UIStroke", container)
+    cs.Color = Color3.fromRGB(60, 60, 60)
+    cs.Thickness = 1
+
+    local lbl = Instance.new("TextLabel", container)
+    lbl.Size = UDim2.new(0.7, 0, 0, 22)
+    lbl.Position = UDim2.new(0, 14, 0, 8)
+    lbl.BackgroundTransparency = 1
+    lbl.Text = labelText
+    lbl.TextColor3 = Color3.fromRGB(230, 230, 230)
+    lbl.Font = Enum.Font.Gotham
+    lbl.TextSize = 13
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+
+    local valLbl = Instance.new("TextLabel", container)
+    valLbl.Size = UDim2.new(0.3, -14, 0, 22)
+    valLbl.Position = UDim2.new(0.7, 0, 0, 8)
+    valLbl.BackgroundTransparency = 1
+    valLbl.Text = tostring(default)
+    valLbl.TextColor3 = Color3.fromRGB(180, 180, 180)
+    valLbl.Font = Enum.Font.GothamBold
+    valLbl.TextSize = 13
+    valLbl.TextXAlignment = Enum.TextXAlignment.Right
+
+    local trackBG = Instance.new("Frame", container)
+    trackBG.Size = UDim2.new(1, -28, 0, 6)
+    trackBG.Position = UDim2.new(0, 14, 0, 38)
+    trackBG.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
+    trackBG.BorderSizePixel = 0
+    local trackCorner = Instance.new("UICorner", trackBG)
+    trackCorner.CornerRadius = UDim.new(1, 0)
+
+    local fill = Instance.new("Frame", trackBG)
+    fill.Size = UDim2.new((default - min) / (max - min), 0, 1, 0)
+    fill.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+    fill.BorderSizePixel = 0
+    local fillCorner = Instance.new("UICorner", fill)
+    fillCorner.CornerRadius = UDim.new(1, 0)
+
+    local knob = Instance.new("Frame", trackBG)
+    knob.Size = UDim2.new(0, 14, 0, 14)
+    knob.Position = UDim2.new((default - min) / (max - min), -7, 0.5, -7)
+    knob.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+    knob.BorderSizePixel = 0
+    local knobCorner = Instance.new("UICorner", knob)
+    knobCorner.CornerRadius = UDim.new(1, 0)
+
+    local sliding = false
+    trackBG.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then sliding = true end
+    end)
+    trackBG.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then sliding = false end
+    end)
+    UserInputService.InputChanged:Connect(function(input)
+        if sliding and input.UserInputType == Enum.UserInputType.MouseMovement then
+            local relX = math.clamp((input.Position.X - trackBG.AbsolutePosition.X) / trackBG.AbsoluteSize.X, 0, 1)
+            local val = math.floor(min + relX * (max - min))
+            fill.Size = UDim2.new(relX, 0, 1, 0)
+            knob.Position = UDim2.new(relX, -7, 0.5, -7)
+            valLbl.Text = tostring(val)
+            if callback then callback(val) end
+        end
+    end)
+
+    return container
+end
+
+-- Build Sections
+MakeSection(ScrollFrame, "⬡  COMBAT", 1)
+
+MakeToggle(ScrollFrame, "Aimbot", 2, function(on)
+    State.Aimbot = on
+    if on then StartAimbot()
+    elseif Connections["Aimbot"] then Connections["Aimbot"]:Disconnect() end
+end)
+
+MakeToggle(ScrollFrame, "Silent Aim", 3, function(on)
+    State.SilentAim = on
+    if on then StartSilentAim() end
+end)
+
+MakeSection(ScrollFrame, "⬡  MOVEMENT", 4)
+
+MakeToggle(ScrollFrame, "Fly  [ WASD + Space / Shift ]", 5, function(on)
+    State.Fly = on
+    if on then StartFly() else StopFly() end
+end)
+
+MakeSlider(ScrollFrame, "Fly Speed", 6, 10, 300, 80, function(v)
+    State.FlySpeed = v
+end)
+
+MakeSection(ScrollFrame, "⬡  VISUALS", 7)
+
+MakeToggle(ScrollFrame, "ESP  [ Name + HP ]", 8, function(on)
+    State.ESP = on
+    if on then StartESP() else ClearESP() end
+end)
+
+MakeToggle(ScrollFrame, "FOV Circle", 9, function(on)
+    State.FOVVisible = on
+    FOVCircle.Visible = on
+end)
+
+MakeSlider(ScrollFrame, "FOV Radius", 10, 30, 400, 120, function(v)
+    State.FOVSize = v
+end)
+
+MakeSection(ScrollFrame, "⬡  PLAYER", 11)
+
+MakeToggle(ScrollFrame, "Big Head", 12, function(on)
+    State.BigHead = on
+    ApplyBigHead()
+    -- re-apply on respawn
+    LocalPlayer.CharacterAdded:Connect(function()
+        task.wait(1)
+        if State.BigHead then ApplyBigHead() end
+    end)
+end)
+
+MakeToggle(ScrollFrame, "God Mode", 13, function(on)
+    State.GodMode = on
+    ApplyGodMode()
+    -- re-apply on respawn
+    LocalPlayer.CharacterAdded:Connect(function()
+        task.wait(1)
+        if State.GodMode then ApplyGodMode() end
+    end)
+end)
+
+MakeSlider(ScrollFrame, "Aimbot Smoothing", 14, 1, 20, 3, function(v)
+    State.AimbotSmoothing = v / 100
+end)
+
+-- Footer
+local footer = Instance.new("TextLabel", Main)
+footer.Size = UDim2.new(1, 0, 0, 20)
+footer.Position = UDim2.new(0, 0, 1, -22)
+footer.BackgroundTransparency = 1
+footer.Text = "ZEN HUB  •  stay low"
+footer.TextColor3 = Color3.fromRGB(60, 60, 60)
+footer.Font = Enum.Font.Gotham
+footer.TextSize = 11
+
+-- Toggle GUI Visibility with RightAlt
+UserInputService.InputBegan:Connect(function(input, gp)
+    if gp then return end
+    if input.KeyCode == Enum.KeyCode.RightAlt then
+        Main.Visible = not Main.Visible
+    end
+end)
+
+print("☯ ZEN HUB loaded | RightAlt to toggle")
+```
